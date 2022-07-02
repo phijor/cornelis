@@ -10,30 +10,60 @@ import           Data.Bool (bool)
 import           Data.Function (on)
 import           Data.Int
 import           Data.List (sortOn, groupBy, intersperse)
-import           Data.Maybe (maybeToList, fromMaybe)
+import qualified Data.Map as M
+import           Data.Maybe (maybeToList, fromMaybe, fromJust)
 import           Data.Semigroup (stimes)
 import qualified Data.Text as T
 import           Prettyprinter
 import           Prettyprinter.Internal.Type
 
+
+-- Custom highlight groups set by the plugin.
+-- They're linked to default highlight groups
+-- in `syntax/agda.vim`.
 data HighlightGroup
-  = Keyword
-  | Normal
-  | Type
-  | Operator
-  | Identifier
-  | Constant
-  | Number
-  | Comment
-  | Todo
-  | String
-  | Folded
-  | Structure
-  | Title
-  | PreProc
-  | Error
-  | WarningMsg
-  deriving (Eq, Ord, Show)
+  = CornelisError
+  | CornelisErrorWarning
+  | CornelisWarn
+  | CornelisHole
+  | CornelisUnsolvedMeta
+  | CornelisUnsolvedConstraint
+  | CornelisKeyword
+  | CornelisSymbol
+  | CornelisType
+  | CornelisPrimitiveType
+  | CornelisRecord
+  | CornelisFunction
+  | CornelisArgument
+  | CornelisBound
+  | CornelisField
+  | CornelisGeneralizable
+  | CornelisMacro
+  | CornelisInductiveConstructor
+  | CornelisCoinductiveConstructor
+  | CornelisNumber
+  | CornelisComment
+  | CornelisString
+  | CornelisCatchAllClause
+  | CornelisTypeChecks
+  | CornelisModule
+  | CornelisPostulate
+  | CornelisPrimitive
+  | CornelisPragma
+  | CornelisName
+  | CornelisTitle -- Titles in context window
+  deriving (Eq, Ord, Show, Read, Enum, Bounded)
+
+atomToHlGroup :: Text -> Maybe HighlightGroup
+atomToHlGroup atom = M.lookup atom allHlGroups where
+    stripCornelis = fromJust . T.stripPrefix "Cornelis"
+
+    toAtomName :: HighlightGroup -> Text
+    toAtomName hlGroup = T.toLower $ stripCornelis $ T.pack $ show hlGroup
+
+    allHlGroups :: M.Map Text HighlightGroup
+    allHlGroups = M.fromList $
+        map (\g -> (toAtomName g, g)) [(minBound :: HighlightGroup) ..]
 
 data InfoHighlight a = InfoHighlight
   { ihl_start :: (Int64, Int64)
@@ -79,7 +109,7 @@ renderWithHlGroups = go [] 0 0
 
 
 prettyType :: C.Type -> Doc HighlightGroup
-prettyType (C.Type ty) = annotate Type $ sep $ fmap pretty $ T.lines ty
+prettyType (C.Type ty) = annotate CornelisType $ sep $ fmap pretty $ T.lines ty
 
 
 groupScopeSet :: [InScope] -> [[InScope]]
@@ -92,7 +122,7 @@ groupScopeSet
 prettyGoals :: DisplayInfo -> Doc HighlightGroup
 prettyGoals (AllGoalsWarnings vis invis errs warns) =
   vcat $ punctuate hardline $ filter (not . isEmpty)
-    [ section "Warnings" warns $ annotate WarningMsg . pretty . getMessage
+    [ section "Warnings" warns $ annotate CornelisWarn . pretty . getMessage
     , section "Visible Goals" vis $
         prettyGoal . fmap (mappend "?" . T.pack . show . ip_id)
     , section "Errors" errs prettyError
@@ -104,9 +134,9 @@ prettyGoals (GoalSpecific _ scoped ty mhave mboundary mconstraints) =
   vcat $ intersperse (stimes @_ @Int 60 "—") $
     [ section "Boundary" (fromMaybe [] mboundary) pretty
     ] <>
-    [ annotate Title "Goal:" <+> prettyType ty
+    [ annotate CornelisTitle "Goal:" <+> prettyType ty
     ] <>
-    [ annotate Title "Have:" <+> prettyType have
+    [ annotate CornelisTitle "Have:" <+> prettyType have
     | have <- maybeToList mhave
     ] <>
     [ vcat $ fmap prettyInScopeSet $ groupScopeSet scoped
@@ -116,16 +146,16 @@ prettyGoals (GoalSpecific _ scoped ty mhave mboundary mconstraints) =
 prettyGoals (HelperFunction sig) =
   section "Helper Function"
     [ mempty
-    , annotate Type $ pretty sig
+    , annotate CornelisType $ pretty sig
     , mempty
-    , annotate Comment $ parens "copied to \" register"
+    , annotate CornelisComment $ parens "copied to \" register"
     ] id
 prettyGoals (InferredType ty) =
-  annotate Title "Inferred Type:" <+> prettyType ty
+  annotate CornelisTitle "Inferred Type:" <+> prettyType ty
 prettyGoals (WhyInScope msg) = pretty msg
 prettyGoals (NormalForm expr) = pretty expr
-prettyGoals (DisplayError err) = annotate Error $ pretty err
-prettyGoals (UnknownDisplayInfo v) = annotate Error $ pretty $ show v
+prettyGoals (DisplayError err) = annotate CornelisError $ pretty err
+prettyGoals (UnknownDisplayInfo v) = annotate CornelisError $ pretty $ show v
 
 prettyInterval :: AgdaInterval -> Doc HighlightGroup
 prettyInterval (Interval s e)
@@ -150,7 +180,7 @@ section
     -> Doc HighlightGroup
 section _ [] _ = mempty
 section doc as f = vcat $
-  annotate Title (doc <> ":") : fmap f as
+  annotate CornelisTitle (doc <> ":") : fmap f as
 
 
 prettyName :: Text -> Doc HighlightGroup
@@ -158,15 +188,15 @@ prettyName = prettyVisibleName True
 
 
 prettyVisibleName :: Bool -> Text -> Doc HighlightGroup
-prettyVisibleName False t = annotate Comment $ "(" <> pretty t <> ")"
-prettyVisibleName True t = annotate Identifier $ pretty t
+prettyVisibleName False t = annotate CornelisComment $ "(" <> pretty t <> ")"
+prettyVisibleName True t = annotate CornelisName $ pretty t
 
 prettyInScope :: InScope -> Doc HighlightGroup
 prettyInScope (InScope reified _ in_scope ty) =
   hsep
     [ prettyGoal $ GoalInfo reified ty
     , bool
-        (pretty (replicate 6 ' ') <+> annotate Comment (parens "not in scope"))
+        (pretty (replicate 6 ' ') <+> annotate CornelisComment (parens "not in scope"))
         mempty
         in_scope
     ]
@@ -194,4 +224,4 @@ prettyGoal (GoalInfo name ty) =
 prettyError :: Message -> Doc HighlightGroup
 prettyError (Message msg) =
   let (hdr, body) = fmap (T.drop 1) $ T.break (== '\n') msg in
-  vcat [ annotate Error (pretty hdr) , pretty body ]
+  vcat [ annotate CornelisError (pretty hdr) , pretty body ]
